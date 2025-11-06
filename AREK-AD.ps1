@@ -5,8 +5,7 @@
 #>
 
 param(
-  [Alias('h','help')]
-  [switch]$Help,
+  [switch]$ShowHelp,
 
   [ValidateSet("Console","File","Both")]
   [string]$OutputMode = "Both",
@@ -19,9 +18,9 @@ param(
   [int]$SprayRate = 30
 )
 
-# ───────────── HELP ─────────────
-if ($Help -or ($args -contains '--help') -or ($args -contains '-h')) {
-@"
+# ---------------- HELP ----------------
+if ($ShowHelp -or ($args -contains '--help') -or ($args -contains '-h')) {
+@'
 AREK-AD.ps1 — Active Directory Enumeration & Risk Evaluation Kit
 
 Usage:
@@ -40,192 +39,250 @@ Examples:
   .\AREK-AD.ps1 -OutputMode Console
   .\AREK-AD.ps1 -OutFolder .\results
   .\AREK-AD.ps1 -ExecuteUnsafe -ConfirmUnsafe
-"@ | Write-Host -ForegroundColor Yellow
+'@ | Write-Host -ForegroundColor Yellow
   exit
 }
 
-# ───────────── UTILITIES ─────────────
-function Section($Title){
+# ---------------- UTILITIES ----------------
+function Section {
+  param([string]$Title)
   Write-Host "`n==================================================" -ForegroundColor Cyan
   Write-Host "== $Title" -ForegroundColor Green
   Write-Host "==================================================`n" -ForegroundColor Cyan
 }
-function Log($Msg,[ValidateSet('Info','Good','Warn','Err')]$Lvl='Info'){
-  $t=(Get-Date -Format HH:mm:ss)
-  switch($Lvl){
-    'Info'{Write-Host "[$t] [*] $Msg" -ForegroundColor Cyan}
-    'Good'{Write-Host "[$t] [+] $Msg" -ForegroundColor Green}
-    'Warn'{Write-Host "[$t] [!] $Msg" -ForegroundColor Yellow}
-    'Err' {Write-Host "[$t] [X] $Msg" -ForegroundColor Red}
+
+function Log {
+  param(
+    [Parameter(Mandatory = $true)][string]$Msg,
+    [ValidateSet('Info','Good','Warn','Err')][string]$Lvl = 'Info'
+  )
+  $t = (Get-Date -Format HH:mm:ss)
+  switch ($Lvl) {
+    'Info' { Write-Host "[$t] [*] $Msg" -ForegroundColor Cyan }
+    'Good' { Write-Host "[$t] [+] $Msg" -ForegroundColor Green }
+    'Warn' { Write-Host "[$t] [!] $Msg" -ForegroundColor Yellow }
+    'Err'  { Write-Host "[$t] [X] $Msg" -ForegroundColor Red }
   }
-  if($OutputMode -ne "Console" -and $Global:LogPath){
+  if ($OutputMode -ne 'Console' -and $Global:LogPath) {
     Add-Content -Path $Global:LogPath -Value "[$t][$Lvl] $Msg"
   }
 }
-function OutObj($Obj,$Name,$Fmt='csv'){
-  if($OutputMode -ne 'Console'){
-    $path=Join-Path $OutFolder $Name
-    try{
-      switch($Fmt){
-        'csv'  { $Obj|Export-Csv -Path $path -NoTypeInformation -Encoding UTF8 }
-        'json' { $Obj|ConvertTo-Json -Depth 4|Out-File -FilePath $path -Encoding UTF8 }
+
+function OutObj {
+  param(
+    [Parameter(Mandatory = $true)][object]$Obj,
+    [Parameter(Mandatory = $true)][string]$Name,
+    [ValidateSet('csv','json')][string]$Fmt = 'csv'
+  )
+  if ($OutputMode -ne 'Console') {
+    $path = Join-Path $OutFolder $Name
+    try {
+      switch ($Fmt) {
+        'csv'  { $Obj | Export-Csv -Path $path -NoTypeInformation -Encoding UTF8 }
+        'json' { $Obj | ConvertTo-Json -Depth 4 | Out-File -FilePath $path -Encoding UTF8 }
       }
-      Log "Saved $Name" "Good"
-    }catch{
-      Log ("Failed to write $Name : $($_.Exception.Message)") "Err"
+      Log -Msg ("Saved " + $Name) -Lvl 'Good'
+    } catch {
+      Log -Msg ("Failed to write " + $Name + " : " + $_.Exception.Message) -Lvl 'Err'
     }
   }
-  if($OutputMode -ne 'File'){
-    Write-Host "`n>>> $Name preview:" -ForegroundColor Cyan
-    try{ $Obj|Select-Object -First 10|Format-Table -AutoSize|Out-Host }catch{ $Obj|Select-Object -First 10|Out-Host }
+  if ($OutputMode -ne 'File') {
+    Write-Host "`n>>> " + $Name + " preview:" -ForegroundColor Cyan
+    try {
+      $Obj | Select-Object -First 10 | Format-Table -AutoSize | Out-Host
+    } catch {
+      $Obj | Select-Object -First 10 | Out-Host
+    }
   }
 }
 
-# ───────────── INIT ─────────────
-if($OutputMode -ne "Console"){
-  if(-not(Test-Path $OutFolder)){New-Item -ItemType Directory -Path $OutFolder|Out-Null}
-  $Global:LogPath=Join-Path $OutFolder "arek-log.txt"
-}
-Section "INITIALIZATION"
-Log "AREK-AD started | Mode=$OutputMode | Folder=$OutFolder"
-
-# ───────────── ENUM DOMAIN / FOREST / DC ─────────────
-Section "DOMAIN / FOREST / DC INFO"
-try{
-  $dom=[System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-  $forest=$dom.Forest
-  $dcs=$dom.DomainControllers|Select Name,IPv4Address
-  $info=[PSCustomObject]@{Domain=$dom.Name;Forest=$forest.Name;DCs=($dcs.Name -join ',')}
-  OutObj $info "domain.json" "json"
-}catch{
-  Log ("Domain discovery failed: $($_.Exception.Message)") "Err"
+# ---------------- INIT ----------------
+if ($OutputMode -ne 'Console') {
+  if (-not (Test-Path $OutFolder)) {
+    New-Item -ItemType Directory -Path $OutFolder | Out-Null
+  }
+  $Global:LogPath = Join-Path $OutFolder 'arek-log.txt'
 }
 
-# ───────────── ENUM TRUSTS ─────────────
-Section "DOMAIN TRUSTS"
-try{
-  $forest=[System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()
-  $trusts=$forest.GetAllTrustRelationships()|Select SourceName,TargetName,TrustType,Direction
-  if($trusts){OutObj $trusts "trusts.csv"}else{Log "No trusts found." "Warn"}
-}catch{Log "Trust enumeration failed." "Warn"}
+Section 'INITIALIZATION'
+Log -Msg ('AREK-AD started | Mode=' + $OutputMode + ' | Folder=' + $OutFolder) -Lvl 'Info'
 
-# ───────────── ENUM USERS / GROUPS / COMPUTERS ─────────────
-Section "USERS / GROUPS / COMPUTERS"
-$HaveAD=$false
-if(Get-Module -ListAvailable -Name ActiveDirectory){
+# ---------------- DOMAIN / FOREST / DC ----------------
+Section 'DOMAIN / FOREST / DC INFO'
+try {
+  $dom = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+  $forest = $dom.Forest
+  $dcs = $dom.DomainControllers | Select-Object Name, IPv4Address
+  $info = [PSCustomObject]@{
+    Domain = $dom.Name
+    Forest = $forest.Name
+    DCs    = ($dcs.Name -join ',')
+  }
+  OutObj -Obj $info -Name 'domain.json' -Fmt 'json'
+} catch {
+  Log -Msg ('Domain discovery failed: ' + $_.Exception.Message) -Lvl 'Err'
+}
+
+# ---------------- TRUSTS ----------------
+Section 'DOMAIN TRUSTS'
+try {
+  $forestObj = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()
+  $trusts = $forestObj.GetAllTrustRelationships() | Select-Object SourceName, TargetName, TrustType, Direction
+  if ($trusts) { OutObj -Obj $trusts -Name 'trusts.csv' -Fmt 'csv' }
+  else { Log -Msg 'No trusts found.' -Lvl 'Warn' }
+} catch {
+  Log -Msg 'Trust enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- USERS / GROUPS / COMPUTERS ----------------
+Section 'USERS / GROUPS / COMPUTERS'
+$HaveAD = $false
+if (Get-Module -ListAvailable -Name ActiveDirectory) {
   Import-Module ActiveDirectory -ErrorAction SilentlyContinue
-  $HaveAD=$true
-}
-if($HaveAD){
-  try{
-    $users=Get-ADUser -Filter * -Properties SamAccountName,UserPrincipalName,DisplayName,ServicePrincipalName,userAccountControl,LastLogonDate|
-           Select SamAccountName,DisplayName,UserPrincipalName,LastLogonDate,ServicePrincipalName,userAccountControl
-    $groups=Get-ADGroup -Filter * -Properties GroupCategory,GroupScope|Select Name,GroupCategory,GroupScope
-    $computers=Get-ADComputer -Filter * -Properties OperatingSystem,LastLogonDate|Select Name,OperatingSystem,LastLogonDate
-    OutObj $users "users.csv"
-    OutObj $groups "groups.csv"
-    OutObj $computers "computers.csv"
-  }catch{Log "User/group/computer enumeration failed." "Err"}
-}else{
-  Log "ActiveDirectory module missing – limited enumeration only." "Warn"
+  $HaveAD = $true
 }
 
-# ───────────── ENUM SPN / KERBEROAST ─────────────
-Section "KERBEROAST CANDIDATES (SPN)"
-try{
-  $spn=Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties ServicePrincipalName|
-       Select SamAccountName,ServicePrincipalName
-  if($spn){OutObj $spn "spn_accounts.csv"}else{Log "No SPN accounts found." "Warn"}
-}catch{Log "SPN enumeration failed." "Warn"}
+if ($HaveAD) {
+  try {
+    $users = Get-ADUser -Filter * -Properties SamAccountName, UserPrincipalName, DisplayName, ServicePrincipalName, userAccountControl, LastLogonDate |
+             Select-Object SamAccountName, DisplayName, UserPrincipalName, LastLogonDate, ServicePrincipalName, userAccountControl
+    $groups = Get-ADGroup -Filter * -Properties GroupCategory, GroupScope | Select-Object Name, GroupCategory, GroupScope
+    $computers = Get-ADComputer -Filter * -Properties OperatingSystem, LastLogonDate | Select-Object Name, OperatingSystem, LastLogonDate
 
-# ───────────── ENUM AS-REP ROAST ─────────────
-Section "AS-REP ROASTABLE ACCOUNTS"
-try{
-  $flag=0x00400000
-  $asrep=Get-ADUser -Filter * -Properties userAccountControl|
-         Where-Object {($_.userAccountControl -band $flag) -ne 0}|
-         Select SamAccountName,DistinguishedName
-  if($asrep){OutObj $asrep "asrep_accounts.csv"}else{Log "No AS-REP roastable users." "Warn"}
-}catch{Log "AS-REP enumeration failed." "Warn"}
+    OutObj -Obj $users -Name 'users.csv' -Fmt 'csv'
+    OutObj -Obj $groups -Name 'groups.csv' -Fmt 'csv'
+    OutObj -Obj $computers -Name 'computers.csv' -Fmt 'csv'
+  } catch {
+    Log -Msg 'User/group/computer enumeration failed.' -Lvl 'Err'
+  }
+} else {
+  Log -Msg 'ActiveDirectory module missing – limited enumeration only.' -Lvl 'Warn'
+}
 
-# ───────────── ENUM KRBTGT ─────────────
-Section "KRBTGT ACCOUNT INFO"
-try{
-  $krbtgt=Get-ADUser -Identity krbtgt -Properties Enabled,PasswordLastSet|
-          Select SamAccountName,Enabled,PasswordLastSet
-  OutObj $krbtgt "krbtgt.json" "json"
-}catch{Log "KRBTGT query failed." "Warn"}
+# ---------------- SPN / KERBEROAST ----------------
+Section 'KERBEROAST CANDIDATES (SPN)'
+try {
+  $spn = Get-ADUser -Filter { ServicePrincipalName -like '*' } -Properties ServicePrincipalName |
+         Select-Object SamAccountName, ServicePrincipalName
+  if ($spn) { OutObj -Obj $spn -Name 'spn_accounts.csv' -Fmt 'csv' }
+  else { Log -Msg 'No SPN accounts found.' -Lvl 'Warn' }
+} catch {
+  Log -Msg 'SPN enumeration failed.' -Lvl 'Warn'
+}
 
-# ───────────── ENUM GPO / OU ─────────────
-Section "GROUP POLICY OBJECTS"
-try{
-  if(Get-Module -ListAvailable -Name GroupPolicy){
+# ---------------- AS-REP ----------------
+Section 'AS-REP ROASTABLE ACCOUNTS'
+try {
+  $flag = 0x00400000
+  $asrep = Get-ADUser -Filter * -Properties userAccountControl |
+           Where-Object { ($_.userAccountControl -band $flag) -ne 0 } |
+           Select-Object SamAccountName, DistinguishedName
+  if ($asrep) { OutObj -Obj $asrep -Name 'asrep_accounts.csv' -Fmt 'csv' }
+  else { Log -Msg 'No AS-REP roastable users.' -Lvl 'Warn' }
+} catch {
+  Log -Msg 'AS-REP enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- KRBTGT ----------------
+Section 'KRBTGT ACCOUNT INFO'
+try {
+  $krbtgt = Get-ADUser -Identity krbtgt -Properties Enabled, PasswordLastSet |
+            Select-Object SamAccountName, Enabled, PasswordLastSet
+  OutObj -Obj $krbtgt -Name 'krbtgt.json' -Fmt 'json'
+} catch {
+  Log -Msg 'KRBTGT query failed.' -Lvl 'Warn'
+}
+
+# ---------------- GPO / OU ----------------
+Section 'GROUP POLICY OBJECTS'
+try {
+  if (Get-Module -ListAvailable -Name GroupPolicy) {
     Import-Module GroupPolicy -ErrorAction SilentlyContinue
-    $gpo=Get-GPO -All|Select DisplayName,Id,Owner,ModificationTime
-    OutObj $gpo "gpos.csv"
-  }else{
-    Log "GroupPolicy module not installed." "Warn"
+    $gpo = Get-GPO -All | Select-Object DisplayName, Id, Owner, ModificationTime
+    OutObj -Obj $gpo -Name 'gpos.csv' -Fmt 'csv'
+  } else {
+    Log -Msg 'GroupPolicy module not installed.' -Lvl 'Warn'
   }
-}catch{Log "GPO enumeration failed." "Warn"}
-
-Section "ORGANIZATIONAL UNITS"
-try{
-  $ou=Get-ADOrganizationalUnit -Filter *|Select Name,DistinguishedName
-  OutObj $ou "ou_list.csv"
-}catch{Log "OU enumeration failed." "Warn"}
-
-# ───────────── ENUM PASSWORD POLICY ─────────────
-Section "PASSWORD POLICY"
-try{
-  $policy=Get-ADDefaultDomainPasswordPolicy|
-          Select ComplexityEnabled,LockoutThreshold,MinPasswordLength,MaxPasswordAge
-  OutObj $policy "password_policy.json" "json"
-}catch{Log "Password policy enumeration failed." "Warn"}
-
-# ───────────── ENUM PRIVILEGED GROUPS ─────────────
-Section "PRIVILEGED GROUP MEMBERS"
-try{
-  $priv=@("Domain Admins","Enterprise Admins","Administrators","Backup Operators","DnsAdmins")
-  foreach($p in $priv){
-    $m=Get-ADGroupMember $p -ErrorAction SilentlyContinue|Select Name,SamAccountName
-    if($m){OutObj $m ("{0}_members.csv" -f ($p -replace ' ','_'))}
-  }
-}catch{Log "Privileged group enumeration failed." "Warn"}
-
-# ───────────── ENUM DC SERVICES ─────────────
-Section "DOMAIN CONTROLLER SERVICES"
-try{
-  $dcs=Get-ADDomainController -Filter *|Select Name,IPv4Address,Site,OperatingSystem
-  OutObj $dcs "domaincontrollers.csv"
-}catch{Log "DC enumeration failed." "Warn"}
-
-# ───────────── ENUM DNS ─────────────
-Section "DNS ZONES"
-try{
-  $dns=Get-DnsServerZone -ErrorAction SilentlyContinue|Select ZoneName,ZoneType,ReplicationScope
-  if($dns){OutObj $dns "dns_zones.csv"}else{Log "No DNS zones or insufficient rights." "Warn"}
-}catch{Log "DNS zone query failed." "Warn"}
-
-# ───────────── ENUM LOCAL SESSIONS ─────────────
-Section "LOGGED-ON USERS (LOCAL)"
-try{
-  $sessions=query user 2>$null
-  if($sessions){Write-Host $sessions -ForegroundColor Gray}else{Log "No local sessions visible." "Warn"}
-}catch{Log "Local session query failed." "Warn"}
-
-# ───────────── UNSAFE SIMULATIONS ─────────────
-if($ExecuteUnsafe -and $ConfirmUnsafe){
-  Section "ATTACK SIMULATION (LAB ONLY)"
-  Log "Unsafe mode active – exporting roast candidates" "Warn"
-  try{$spn|Export-Csv (Join-Path $OutFolder "kerberoast_candidates.csv") -NoTypeInformation}catch{}
-  try{$asrep|Export-Csv (Join-Path $OutFolder "asrep_candidates.csv") -NoTypeInformation}catch{}
-}elseif($ExecuteUnsafe){
-  Log "Add -ConfirmUnsafe to proceed with unsafe actions." "Warn"
-}else{
-  Log "Safe mode active – no attacks simulated." "Info"
+} catch {
+  Log -Msg 'GPO enumeration failed.' -Lvl 'Warn'
 }
 
-# ───────────── SUMMARY ─────────────
-Section "SUMMARY"
-Log "AREK-AD completed. Results in $OutFolder" "Good"
+Section 'ORGANIZATIONAL UNITS'
+try {
+  $ou = Get-ADOrganizationalUnit -Filter * | Select-Object Name, DistinguishedName
+  OutObj -Obj $ou -Name 'ou_list.csv' -Fmt 'csv'
+} catch {
+  Log -Msg 'OU enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- PASSWORD POLICY ----------------
+Section 'PASSWORD POLICY'
+try {
+  $policy = Get-ADDefaultDomainPasswordPolicy | Select-Object ComplexityEnabled, LockoutThreshold, MinPasswordLength, MaxPasswordAge
+  OutObj -Obj $policy -Name 'password_policy.json' -Fmt 'json'
+} catch {
+  Log -Msg 'Password policy enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- PRIVILEGED GROUPS ----------------
+Section 'PRIVILEGED GROUP MEMBERS'
+try {
+  $priv = @('Domain Admins','Enterprise Admins','Administrators','Backup Operators','DnsAdmins')
+  foreach ($p in $priv) {
+    $m = Get-ADGroupMember $p -ErrorAction SilentlyContinue | Select-Object Name, SamAccountName
+    if ($m) { OutObj -Obj $m -Name ("{0}_members.csv" -f ($p -replace ' ', '_')) -Fmt 'csv' }
+  }
+} catch {
+  Log -Msg 'Privileged group enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- DC SERVICES ----------------
+Section 'DOMAIN CONTROLLER SERVICES'
+try {
+  $dcs = Get-ADDomainController -Filter * | Select-Object Name, IPv4Address, Site, OperatingSystem
+  OutObj -Obj $dcs -Name 'domaincontrollers.csv' -Fmt 'csv'
+} catch {
+  Log -Msg 'DC enumeration failed.' -Lvl 'Warn'
+}
+
+# ---------------- DNS ----------------
+Section 'DNS ZONES'
+try {
+  $dns = Get-DnsServerZone -ErrorAction SilentlyContinue | Select-Object ZoneName, ZoneType, ReplicationScope
+  if ($dns) { OutObj -Obj $dns -Name 'dns_zones.csv' -Fmt 'csv' }
+  else { Log -Msg 'No DNS zones or insufficient rights.' -Lvl 'Warn' }
+} catch {
+  Log -Msg 'DNS zone query failed.' -Lvl 'Warn'
+}
+
+# ---------------- LOCAL SESSIONS ----------------
+Section 'LOGGED-ON USERS (LOCAL)'
+try {
+  $sessions = query user 2>$null
+  if ($sessions) { Write-Host $sessions -ForegroundColor Gray }
+  else { Log -Msg 'No local sessions visible.' -Lvl 'Warn' }
+} catch {
+  Log -Msg 'Local session query failed.' -Lvl 'Warn'
+}
+
+# ---------------- ATTACK SIMULATIONS (GATED) ----------------
+if ($ExecuteUnsafe -and $ConfirmUnsafe) {
+  Section 'ATTACK SIMULATION (LAB ONLY)'
+  Log -Msg 'Unsafe mode active – exporting roast candidates' -Lvl 'Warn'
+  try { $spn | Export-Csv -Path (Join-Path $OutFolder 'kerberoast_candidates.csv') -NoTypeInformation } catch {}
+  try { $asrep | Export-Csv -Path (Join-Path $OutFolder 'asrep_candidates.csv') -NoTypeInformation } catch {}
+  if ($SprayUserFile -and $SprayPassFile) {
+    Log -Msg 'Password spray helper placeholder (manual step)' -Lvl 'Warn'
+  }
+} elseif ($ExecuteUnsafe) {
+  Log -Msg 'Add -ConfirmUnsafe to proceed with unsafe actions.' -Lvl 'Warn'
+} else {
+  Log -Msg 'Safe mode active – no attacks simulated.' -Lvl 'Info'
+}
+
+# ---------------- SUMMARY ----------------
+Section 'SUMMARY'
+Log -Msg ('AREK-AD completed. Results in ' + $OutFolder) -Lvl 'Good'
+
+# End of file
 
