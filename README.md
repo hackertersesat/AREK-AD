@@ -1,182 +1,182 @@
-# AREK-AD.ps1 — README.md update
+# AREK-AD — Auto Recon for Active Directory
 
-> PowerShell helper for **safe Active Directory enumeration** plus optional **controlled attack-simulation helpers** (Kerberoast, AS-REP, password spraying) — intended **only** for labs and authorized pentesting (OSCP practice, training VMs, etc.).
-
----
-
-## Table of contents
-1. [Purpose](#purpose)  
-2. [Important safety & legal notice](#important-safety--legal-notice)  
-3. [Requirements](#requirements)  
-4. [Files produced by the script](#files-produced-by-the-script)  
-5. [Quick usage examples](#quick-usage-examples)  
-6. [Parameters & flags](#parameters--flags)  
-7. [Detailed behavior & notes](#detailed-behavior--notes)  
-8. [Password spraying guidance](#password-spraying-guidance)  
-9. [External tooling integration](#external-tooling-integration)  
-10. [Troubleshooting](#troubleshooting)  
-11. [Contributing / Attribution / License](#contributing--attribution--license)  
+Single-file PowerShell tool for **safe, read-only Active Directory enumeration** with optional, gated helpers for lab attack simulation.  
+Designed for OSCP-style AD labs and post-compromise snapshots (works well in Evil-WinRM/WinRM shells).
 
 ---
 
-## Purpose
-This repository contains a single PowerShell script (`AREK-AD.ps1`) that:
-
-- Performs **read-only enumeration** of an Active Directory environment:
-  - Domain, domain controllers, users, groups, computers
-  - SPN (Kerberoast candidate) discovery
-  - AS-REP (no-preauth) candidate discovery
-  - KRBTGT account info
-  - GPO listing & basic domain security policy extraction (if RSAT / GroupPolicy present)
-
-- Optionally (only when explicitly enabled) provides **attack-simulation helpers**:
-  - Export Kerberoast/AS-REP candidate lists
-  - Optionally call external tools (Rubeus / Impacket) if provided
-  - Controlled password-spraying routine with rate limiting and authorization prompts
-  - Non-destructive Defender status checks (placeholders)
-
-This is intended to speed up OSCP / lab prep while keeping offensive parts gated and explicit.
+## Table of Contents
+- [Features](#features)  
+- [Requirements](#requirements)  
+- [Installation](#installation)  
+- [Usage](#usage)  
+- [Output files](#output-files)  
+- [Safety & Ethics](#safety--ethics)  
+- [Troubleshooting](#troubleshooting)  
+- [Examples](#examples)  
+- [Changelog](#changelog)  
+- [License](#license)
 
 ---
 
-## Important safety & legal notice
-**READ FIRST.**  
-Do **NOT** run this script against production networks, third-party systems, or any environment where you **do not** have explicit written authorization. Offensive features are gated behind `-ExecuteUnsafe` **and** `-ConfirmUnsafe` switches — BOTH are required to run any potentially destructive or intrusive actions.
-
-You are responsible for how you use this script. The author provides it for educational purposes only.
+## Features
+- Colorized, linPEAS/winPEAS-style console sections for quick scanning.
+- Comprehensive AD enumeration (read-only):
+  - Domain / Forest / Domain Controllers / Trusts  
+  - Users, Groups, Computers  
+  - SPN (Kerberoast) candidates  
+  - AS-REP roastable accounts  
+  - KRBTGT metadata  
+  - Group Policy Objects (GPO) and Organizational Units (OU) structure  
+  - Domain password policy & fine-grained policy info (if available)  
+  - Privileged group membership (Domain Admins, Enterprise Admins, Administrators, etc.)  
+  - Domain Controller services and basic DC info  
+  - DNS zones (if `DnsServer` module & privileges available)  
+  - Local logged-on sessions and basic local context
+- Output Modes: `Console`, `File`, `Both`.
+- Single file: `AREK-AD.ps1` (no companion helper).
+- Offensive helpers are **gated** — require both `-ExecuteUnsafe` and `-ConfirmUnsafe` to enable export of candidate lists for offline attack tooling.
 
 ---
 
 ## Requirements
-- Windows (domain-joined workstation recommended) or PowerShell 7+ with Windows compatibility
-- PowerShell 5.1+ recommended
-- Optional but recommended modules:
-  - `ActiveDirectory` (RSAT: Active Directory module)
-  - `GroupPolicy` (RSAT: Group Policy Management)
-- Optional external tools for stronger offensive flows:
-  - `Rubeus.exe` (Kerberos interactions) or Impacket `GetUserSPNs.py` / `GetNPUsers.py`
-- Network connectivity to domain controllers / LDAP
-- Run as Administrator for best results (some queries require elevated privileges)
+- PowerShell 5.1 or later (works across constrained shells like Evil-WinRM).
+- Recommended for full capability (install on host with RSAT/AD modules):
+  - `ActiveDirectory` PowerShell module (RSAT)
+  - `GroupPolicy` (for GPO enumeration)
+  - `DnsServer` (for DNS zone enumeration; typically requires Domain Admin)
+- Appropriate privileges: domain user returns useful info; domain admin returns complete data.
 
 ---
 
-## Files produced by the script
-When you run the script it creates an output folder (default `.\AD-Enumeration-<timestamp>`). Typical files:
-
-- `ad-enumeration.json` — master JSON with collected data  
-- `domain.json` — domain name, forest, DC list  
-- `users.csv` — user records (DisplayName, SamAccountName, UPN, SPNs, userAccountControl, etc.)  
-- `groups.csv` — groups list  
-- `computers.csv` — computer objects  
-- `spn_accounts.csv` — SPN/Kerberoast candidates  
-- `asrep_accounts.csv` — AS-REP (no preauth) candidates  
-- `krbtgt.json` — KRBTGT account metadata (if found)  
-- `gpos.csv` — GPO listing (if GroupPolicy module available)  
-- `kerberoast_candidates.csv` (if unsafe kerberoast enumeration run)  
-- `asrep_candidates.csv` (if unsafe AS-REP enumeration run)  
-- `password_spray_results.csv` — results of password spray attempts (if run)  
-- `*_tool_output.txt` — optional external tool logs
-
----
-
-## Quick usage examples
-
-**Enumeration only (safe, default):**
+## Installation
+Save the single file as `AREK-AD.ps1` on the target machine:
 ```powershell
-.\AREK-AD.ps1 -OutFolder .\ad-output
+# from attacker machine or downloaded into target
+Save-Content .\AREK-AD.ps1   # (or copy/paste the file content)
 ```
 
-**Enumerate + run attack helpers (DANGEROUS — lab only):**
+To run ignoring execution policy for local testing:
 ```powershell
-.\AREK-AD.ps1 -OutFolder .\ad-output -ExecuteUnsafe -ConfirmUnsafe `
-  -KerberoastToolPath "C:\tools\Rubeus.exe" `
-  -ASREPRoastToolPath "C:\tools\asreproast.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\AREK-AD.ps1
 ```
 
-**Run controlled password spray (lab only):**
+---
+
+## Usage
+
+Show help:
 ```powershell
-.\AREK-AD.ps1 -OutFolder .\ad-output -ExecuteUnsafe -ConfirmUnsafe `
-  -SprayUserFile .\userlist.txt -SprayPassFile .\pwlist.txt -SprayRate 10
+.\AREK-AD.ps1 -h
+# or
+.\AREK-AD.ps1 --help
 ```
 
-Notes:
-- `-ExecuteUnsafe` **and** `-ConfirmUnsafe` are both required to enable attack helpers.
-- For password spraying, prefer `-SprayRate 5`–`30` attempts/minute depending on lab lockout policies.
+Basic (default: console + files):
+```powershell
+.\AREK-AD.ps1
+```
+
+Console-only (linPEAS style):
+```powershell
+.\AREK-AD.ps1 -OutputMode Console
+```
+
+Save-only (writes CSV/JSON to OutFolder; quiet console):
+```powershell
+.\AREK-AD.ps1 -OutputMode File -OutFolder .\ad-output
+```
+
+Unsafe (lab-only — export attack candidates for offline use):
+```powershell
+.\AREK-AD.ps1 -ExecuteUnsafe -ConfirmUnsafe -OutFolder .\lab
+```
+
+Password-spray placeholder (note: script logs placeholder; do not abuse):
+```powershell
+.\AREK-AD.ps1 -ExecuteUnsafe -ConfirmUnsafe -SprayUserFile users.txt -SprayPassFile passwords.txt -SprayRate 30
+# Script will place a placeholder/log; implement sprays manually and responsibly if authorized.
+```
 
 ---
 
-## Parameters & flags
-
-| Parameter | Type | Description |
-|---|---:|---|
-| `-OutFolder` | string | Output directory (default `.\AD-Enumeration-<timestamp>`) |
-| `-ExecuteUnsafe` | switch | Enables attack-simulation helpers (must be used with `-ConfirmUnsafe`) |
-| `-ConfirmUnsafe` | switch | Explicit confirm to allow unsafe actions |
-| `-SprayUserFile` | string | Path to newline user list for password spray |
-| `-SprayPassFile` | string | Path to newline password list for password spray |
-| `-SprayRate` | int | Attempts per minute for spray (default `30`) |
-| `-SprayDelaySeconds` | int | Fallback delay between attempts (used if needed) |
-| `-KerberoastToolPath` | string | Path to external Kerberoast tool (optional) |
-| `-ASREPRoastToolPath` | string | Path to external AS-REP tool (optional) |
-
----
-
-## Detailed behavior & notes
-- **Enumeration** uses `ActiveDirectory` module when present; if not found, the script falls back to `System.DirectoryServices` LDAP queries (results may be more limited).
-- **SPN enumeration** identifies accounts that have `servicePrincipalName` attributes set — these are potential Kerberoast targets.
-- **AS-REP detection** looks for `userAccountControl` bits indicating `DONT_REQ_PREAUTH` (decimal `4194304` / hex `0x00400000`).
-- **KRBTGT**: the script reads `krbtgt` metadata like `PasswordLastSet` if retrievable.
-- **GPOs**: Requires `GroupPolicy` module (RSAT). The script will list GPOs; it does not automatically export full GPO XML/policies unless privileged and requested.
-- **Attack helpers**:
-  - Are gated and interactive. You will be prompted before any external tool is called.
-  - Kerberoast/AS-REP functions **do not** perform cracking; they only extract candidate lists and optionally call external tools.
-  - Password spray uses LDAP simple bind attempts — this is intrusive and may trigger lockouts or SIEM alerts.
+## Output files
+When `-OutputMode` ≠ `Console`, results are saved in the `-OutFolder` directory (timestamped by default). Typical files:
+- `domain.json` — domain/forest/DC info  
+- `trusts.csv` — domain trusts (if any)  
+- `users.csv` — user enumeration snapshot  
+- `groups.csv` — groups snapshot  
+- `computers.csv` — computer objects snapshot  
+- `spn_accounts.csv` — Kerberoast candidates  
+- `asrep_accounts.csv` — AS-REP roastable accounts  
+- `krbtgt.json` — krbtgt metadata  
+- `gpos.csv` — GPO list  
+- `ou_list.csv` — Organizational Unit list  
+- `password_policy.json` — domain password policy  
+- `*_members.csv` — privileged group members (Domain_Admins_members.csv, etc.)  
+- `domaincontrollers.csv` — DC service/basic info  
+- `dns_zones.csv` — DNS zone listing (if available)  
+- `arek-log.txt` — event log for this run
 
 ---
 
-## Password spraying guidance (IMPORTANT)
-- **Only in lab/authorized environment.**
-- Use very low `-SprayRate` (recommended `<= 10` attempts/min) in environments with unknown lockout thresholds.
-- Keep password lists short and conservative (e.g., `Password123!`, `Welcome1` for lab).
-- The script requests you type `I HAVE AUTH` before any password spraying to ensure you confirm authorization.
-- Consider non-intrusive alternatives for OSCP practice: test `GetNPUsers.py` (Impacket) for AS-REP enumeration, or use Kerberoast candidates with offline cracking against a separate cracking VM (do not attempt online brute force).
-
----
-
-## External tooling integration
-This script can call external tools if the path is provided. Typical flows:
-- **Kerberoast**: `Rubeus.exe kerberoast` or `GetUserSPNs.py` (Impacket). The script will export `kerberoast_candidates.csv` and can call the tool with a conservative wrapper if you confirm.
-- **AS-REP**: `GetNPUsers.py` (Impacket) or Rubeus variants.
-- The script does **not** include cracking logic — use Hashcat or John the Ripper offline against exported ticket hashes if you have permission.
+## Safety & Ethics
+- **Only use in environments you own or are explicitly authorized to test.**
+- Script is **read-only by default** — it will not attempt brute force or exploitation.
+- Offensive helpers require both `-ExecuteUnsafe` and `-ConfirmUnsafe`; this is intentional to reduce accidental misuse.
+- DO NOT run offensive actions (password spraying, Kerberoast cracking, exploitation) against production systems without written permission.
 
 ---
 
 ## Troubleshooting
-- **ActiveDirectory module not found**: Install RSAT (Remote Server Administration Tools) or run on a domain controller / management workstation.
-- **LDAP bind issues during spray**: Verify network connectivity to DCs and correct domain context. The script uses the first DC found by DNS.
-- **Permission errors**: Run PowerShell as Administrator. Some queries (GPO exports, secedit operations) require domain privileges.
-- **Large AD environments**: LDAP fallback uses `PageSize = 1000`, but very large directories may still be slow — run on a VM with sufficient memory.
+
+**Parser / syntax errors**  
+- If you see parse errors like `Missing closing '}'` or `The string is missing the terminator`, the file may be corrupted/truncated. Overwrite with the canonical single-file copy.
+
+**`ActiveDirectory module missing`**  
+- Limited enumeration will run using .NET/LDAP fallbacks. For full results, run on a host with RSAT/AD PowerShell modules installed.
+
+**`Get-DnsServerZone` / DNS errors**  
+- DNS zone enumeration requires the `DnsServer` module and usually Domain Admin permissions. If you get failures, it’s expected in non-privileged sessions.
+
+**`query user` returns nothing**  
+- Many remote WinRM sessions don’t show interactive console sessions. This is expected; local interactive sessions might not be visible from a non-interactive remote shell.
+
+**Syntax check**  
+```powershell
+powershell -NoProfile -Command { [ScriptBlock]::Create((Get-Content .\AREK-AD.ps1 -Raw)) | Out-String }
+```
+If parser errors appear, re-download/overwrite the script.
 
 ---
 
-## Contributing / Attribution / License
-- Use, modify, and adapt for authorized training and labs.
-- If you improve the script (better error handling, RSAT detection, safer spray simulation modes), please keep changes documented.
-- Suggested license: MIT (or choose your preferred permissive license), but **do not** remove the safety & legal notice.
+## Examples
+
+Quick console run:
+```powershell
+.\AREK-AD.ps1 -OutputMode Console
+```
+
+Full run with saved output:
+```powershell
+.\AREK-AD.ps1 -OutputMode Both -OutFolder .\ad-snapshot
+```
+
+Export Kerberoast/AS-REP candidates (lab only):
+```powershell
+.\AREK-AD.ps1 -ExecuteUnsafe -ConfirmUnsafe -OutFolder .\lab
+```
 
 ---
 
-## Example recommended OSCP workflow
-1. Run enumeration only and collect CSV/JSON outputs:
-   ```powershell
-   .\AREK-AD.ps1 -OutFolder .\oscp-ad-output
-   ```
-2. Inspect `spn_accounts.csv` and `asrep_accounts.csv` for targets.
-3. Export SPN hashes using Impacket / Rubeus in an isolated cracking VM; perform offline cracking there.
-4. If practicing password sprays in lab VMs, set `-SprayRate 5` and very small wordlist.
-5. Keep detailed notes of commands, timings, and results in your OSCP lab report.
+## Changelog (high level)
+- **v1.0** — Initial single-file release with colorized sections and core AD enumeration.  
+- **v1.x** — Stability fixes: quoting/alias issues resolved; added gated unsafe helpers; `-h|--help` handling improved.  
+- **current** — Balanced quoting/brace handling for Evil-WinRM/PowerShell 5.1 compatibility.
 
 ---
 
-## Contact / Author notes
-This script and README were prepared to help streamline OSCP lab practice while enforcing strong safety guards. Please use wisely
+## License
+Provided as-is for educational, lab, and authorized penetration testing use. Use responsibly. No warranty; the author is not liable for misuse.
+
+---
