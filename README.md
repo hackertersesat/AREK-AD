@@ -1,4 +1,4 @@
-# AREK-AD.ps1 — README.md
+# AREK-AD.ps1 — README.md update
 
 > PowerShell helper for **safe Active Directory enumeration** plus optional **controlled attack-simulation helpers** (Kerberoast, AS-REP, password spraying) — intended **only** for labs and authorized pentesting (OSCP practice, training VMs, etc.).
 
